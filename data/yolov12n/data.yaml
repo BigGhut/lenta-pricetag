@@ -1,0 +1,12 @@
+path: data/yolov12n
+train: images/train
+val: images/val
+
+names:
+  0: pricetag
+  1: price_block
+  2: price_digits
+  3: product_name
+  4: qr_code
+  5: barcode
+  6: promo_sticker

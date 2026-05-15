@@ -1,0 +1,29 @@
+# === Core ===
+ultralytics>=8.4.51
+torch>=2.0.0
+torchvision>=0.15.0
+numpy>=1.24.0
+
+# === Computer Vision ===
+opencv-python>=4.6.0
+
+# === OCR ===
+easyocr>=1.7
+pyzbar>=0.1.9
+
+# === Data Processing ===
+scipy>=1.10.0
+scikit-learn>=1.0.0
+
+# === Visualization ===
+matplotlib>=3.3.0
+
+# === Config ===
+pyyaml>=6.0
+
+# === ONNX (for deployment) ===
+onnxruntime-gpu>=1.15.0
+
+# === PaddleOCR (for RK3588, requires Python 3.10-3.12) ===
+# Install in separate environment:
+#   pip install paddlepaddle-gpu paddleocr

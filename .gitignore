@@ -1,0 +1,56 @@
+# --- Model files (heavy, >5MB each) ---
+*.pt
+*.onnx
+*.rknn
+
+# --- Media files ---
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.jpg
+*.jpeg
+*.png
+*.gif
+
+# --- Training data (2700 images/labels, ~150MB) ---
+train/
+data/yolov12n/images/
+data/yolov12n/labels_full/
+
+# --- Environment ---
+.venv_paddle/
+.venv/
+venv/
+env/
+.conda/
+
+# --- Python cache ---
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+dist/
+build/
+
+# --- Dataset cache ---
+*.cache
+
+# --- Generated files ---
+results/*.csv
+onnx2rknn/calibration.txt
+onnx2rknn/yolo_dataset.txt
+utils/plots/
+det_*.jpg
+*.npy
+
+# --- IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS ---
+.DS_Store
+Thumbs.db

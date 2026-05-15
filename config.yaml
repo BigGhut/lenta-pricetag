@@ -1,0 +1,76 @@
+paths:
+  data: data/yolov12n
+  models: models/yolov12n
+  ocr_models: models/ocr/easyocr_model
+  results: results
+  export: export
+
+model:
+  pretrained: yolo12n.pt
+  trained: models/yolov12n/yolov12n.pt
+  trained_onnx: models/yolov12n/yolov12n.onnx
+  export_onnx: export/yolov12n.onnx
+  rknn: models/yolov12n/yolov12n.rknn
+
+data:
+  yaml: data/yolov12n/data_2class.yaml
+  imgsz: 640
+  nc: 2
+
+training:
+  epochs: 300
+  batch: 16
+  device: 0
+  workers: 4
+  patience: 10
+  delta: 0.001
+  monitor: val/box_loss
+
+export:
+  simplify: true
+  dynamic: false
+
+rknn:
+  mean_values: [[0, 0, 0]]
+  std_values: [[255, 255, 255]]
+  target_platform: rk3588
+  optimization_level: 3
+
+cascade:
+  conf_threshold: 0.5
+  cascade_conf: 0.15
+  iou_threshold: 0.45
+  min_ocr_width: 200
+  crop_expand_factor: 5
+
+candidate_detector:
+  min_size: 40
+  white:
+    lower: [0, 0, 150]
+    upper: [180, 40, 255]
+  red:
+    lower1: [0, 50, 50]
+    upper1: [10, 255, 255]
+    lower2: [170, 50, 50]
+    upper2: [180, 255, 255]
+  yellow:
+    lower: [20, 80, 180]
+    upper: [35, 255, 255]
+  morph_kernel: 15
+
+tracker:
+  center_dist_thresh: 2.0
+  size_ratio_thresh: 0.25
+  max_frames_missed: 5
+
+ocr:
+  engine: paddleocr  # paddleocr | easyocr | auto (fallback)
+  languages: [ru, en]
+  gpu: true
+
+video:
+  skip_frames: 3
+
+cluster:
+  dy_threshold: 80
+  dx_threshold: 600

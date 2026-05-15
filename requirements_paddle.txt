@@ -1,0 +1,6 @@
+# PaddleOCR dependencies (Python 3.10-3.12 only)
+paddlepaddle-gpu>=2.6.0
+paddleocr>=2.8.0
+
+# Additional for RKNN conversion
+rknn-toolkit2>=2.0.0b0

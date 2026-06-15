@@ -9,7 +9,8 @@ except ImportError:
     HAS_PYZBAR = False
 
 
-MIN_OCR_WIDTH = get("cascade.min_ocr_width", 200)
+def _min_ocr_width():
+    return get("cascade.min_ocr_width", 200)
 
 
 def enhance_crop(crop):
@@ -21,8 +22,9 @@ def enhance_crop(crop):
 
     # Upscale if too small
     scale = 1.0
-    if w < MIN_OCR_WIDTH:
-        scale = max(2.0, min(4.0, MIN_OCR_WIDTH / w))
+    min_w = _min_ocr_width()
+    if w < min_w:
+        scale = max(2.0, min(4.0, min_w / w))
         crop = cv2.resize(crop, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
 
     # CLAHE on LAB luminance
@@ -86,4 +88,5 @@ def decode_barcodes_multi(crop):
 def is_ocr_reliable(crop):
     """Check if crop is large enough for meaningful OCR."""
     h, w = crop.shape[:2]
-    return w >= MIN_OCR_WIDTH and h >= MIN_OCR_WIDTH * 0.5
+    min_w = _min_ocr_width()
+    return w >= min_w and h >= min_w * 0.5

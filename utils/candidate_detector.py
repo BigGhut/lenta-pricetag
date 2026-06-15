@@ -2,25 +2,24 @@ import cv2
 import numpy as np
 from utils.config import get
 
-CFG = get("candidate_detector")
-
 
 def detect_pricetag_candidates(frame):
     """
     Simple color-based pricetag detection.
     Returns (x1, y1, x2, y2, confidence, type).
     """
+    cfg = get("candidate_detector")
     h, w = frame.shape[:2]
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
 
     # Color masks
-    white_mask = cv2.inRange(hsv, np.array(CFG["white"]["lower"]), np.array(CFG["white"]["upper"]))
-    r1 = cv2.inRange(hsv, np.array(CFG["red"]["lower1"]), np.array(CFG["red"]["upper1"]))
-    r2 = cv2.inRange(hsv, np.array(CFG["red"]["lower2"]), np.array(CFG["red"]["upper2"]))
+    white_mask = cv2.inRange(hsv, np.array(cfg["white"]["lower"]), np.array(cfg["white"]["upper"]))
+    r1 = cv2.inRange(hsv, np.array(cfg["red"]["lower1"]), np.array(cfg["red"]["upper1"]))
+    r2 = cv2.inRange(hsv, np.array(cfg["red"]["lower2"]), np.array(cfg["red"]["upper2"]))
     red_mask = r1 | r2
-    yellow_mask = cv2.inRange(hsv, np.array(CFG["yellow"]["lower"]), np.array(CFG["yellow"]["upper"]))
+    yellow_mask = cv2.inRange(hsv, np.array(cfg["yellow"]["lower"]), np.array(cfg["yellow"]["upper"]))
 
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (CFG["morph_kernel"], CFG["morph_kernel"]))
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (cfg["morph_kernel"], cfg["morph_kernel"]))
 
     def get_boxes(mask, min_w, min_h):
         closed = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
@@ -32,6 +31,7 @@ def detect_pricetag_candidates(frame):
                 res.append((x, y, x + bw, y + bh, bw, bh))
         return res
 
+    min_size = cfg["min_size"]
     white = get_boxes(white_mask, 40, 20)
     red = get_boxes(red_mask, 15, 15)
     yellow = get_boxes(yellow_mask, 40, 20)

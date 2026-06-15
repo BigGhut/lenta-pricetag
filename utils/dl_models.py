@@ -1,6 +1,6 @@
-import os, urllib.request, ssl, tarfile
-
-ssl._create_default_https_context = ssl._create_unverified_context
+import os
+import urllib.request
+import tarfile
 
 models = [
     ('det', 'https://paddleocr.bj.bcebos.com/PP-OCRv3/multilingual/Multilingual_PP-OCRv3_det_infer.tar'),
@@ -25,7 +25,12 @@ for mtype, url in models:
     print(f'{mtype}: downloading from {host} ...')
     tar_path = os.path.join(os.environ.get('TEMP', '/tmp'), tar_name + '.tar')
     try:
-        urllib.request.urlretrieve(url, tar_path)
+        # Контекст SSL применяется только к этому запросу, а не ко всему процессу.
+        import ssl
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        urllib.request.urlretrieve(url, tar_path, context=ctx)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         with tarfile.open(tar_path) as t:
             t.extractall(path=os.path.dirname(target))

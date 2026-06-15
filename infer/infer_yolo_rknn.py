@@ -1,22 +1,23 @@
 import numpy as np
 import cv2
-from rknn.api import RKNN
 from utils.config import get
-
-
-RKNN_MODEL_PATH = get("model.rknn")
-INPUT_SIZE = get("data.imgsz")
-CONF_THRESHOLD = get("cascade.conf_threshold")
-IOU_THRESHOLD = get("cascade.iou_threshold")
-CASCADE_CONF_THRESHOLD = get("cascade.cascade_conf")
 
 
 class YOLOv12nRKNN:
     def __init__(self, model_path=None):
+        # Импорт rknn и чтение конфига только при создании инстанса,
+        # а не на уровне модуля — иначе import падает на любой машине без RKNN.
+        from rknn.api import RKNN
+
+        self.model_path = model_path or get("model.rknn")
+        self.input_size = get("data.imgsz")
+        self._conf_threshold = get("cascade.conf_threshold")
+        self._iou_threshold = get("cascade.iou_threshold")
+        self._cascade_conf_threshold = get("cascade.cascade_conf")
+
         self.rknn = RKNN(verbose=False)
-        self.rknn.load_rknn(model_path or RKNN_MODEL_PATH)
+        self.rknn.load_rknn(self.model_path)
         self.rknn.init_runtime()
-        self.input_size = INPUT_SIZE
 
     def preprocess(self, frame, target_size=None):
         if target_size is None:
@@ -27,14 +28,17 @@ class YOLOv12nRKNN:
         img = np.transpose(img, (2, 0, 1))
         return img, h, w
 
-    def postprocess(self, outputs, orig_h, orig_w, conf_thres=CONF_THRESHOLD,
-                    iou_thres=IOU_THRESHOLD, target_size=None):
+    def postprocess(self, outputs, orig_h, orig_w, conf_thres=None,
+                    iou_thres=None, target_size=None):
+        if conf_thres is None:
+            conf_thres = self._conf_threshold
+        if iou_thres is None:
+            iou_thres = self._iou_threshold
         if target_size is None:
             target_size = self.input_size
         predictions = np.squeeze(outputs[0])
         if predictions.ndim == 1:
             predictions = predictions.reshape(1, -1)
-        num_classes = predictions.shape[1] - 5
         bboxes = []
 
         for pred in predictions:
@@ -57,16 +61,18 @@ class YOLOv12nRKNN:
 
         return self._nms(bboxes, iou_thres)
 
-    def infer(self, frame, conf_thres=CONF_THRESHOLD):
+    def infer(self, frame, conf_thres=None):
+        if conf_thres is None:
+            conf_thres = self._conf_threshold
         input_tensor, h, w = self.preprocess(frame)
         outputs = self.rknn.inference(inputs=[input_tensor])
         return self.postprocess(outputs, h, w, conf_thres=conf_thres)
 
-    def infer_on_crop(self, crop, conf_thres=CONF_THRESHOLD):
+    def infer_on_crop(self, crop, conf_thres=None):
         return self.infer(crop, conf_thres=conf_thres) if crop.size else []
 
     def refine_pricetag(self, crop):
-        bboxes = self.infer_on_crop(crop, conf_thres=CASCADE_CONF_THRESHOLD)
+        bboxes = self.infer_on_crop(crop, conf_thres=self._cascade_conf_threshold)
         pricetags = [b for b in bboxes if b[5] == 0]
         return max(pricetags, key=lambda b: b[4]) if pricetags else None
 

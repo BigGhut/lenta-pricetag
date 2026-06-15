@@ -16,6 +16,7 @@
 # --- Training data (2700 images/labels, ~150MB) ---
 train/
 data/yolov12n/images/
+data/yolov12n/labels/
 data/yolov12n/labels_full/
 
 # --- Environment ---

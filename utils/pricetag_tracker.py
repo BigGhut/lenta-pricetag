@@ -27,7 +27,8 @@ def size_ratio(box1, box2):
 
 class TrackedTag:
     __slots__ = ("tag_id", "bbox", "ocr_data", "last_seen", "first_seen",
-                 "confidence", "tag_type", "frames_missed", "color")
+                 "confidence", "tag_type", "frames_missed", "color",
+                 "_stale_threshold")
 
     def __init__(self, tag_id, bbox, confidence=0.0, tag_type="white", frame_idx=0):
         self.tag_id = tag_id
@@ -39,6 +40,7 @@ class TrackedTag:
         self.tag_type = tag_type
         self.frames_missed = 0
         self.color = None
+        self._stale_threshold = 5  # default; tracker может переопределить
 
     def update(self, bbox, confidence, frame_idx):
         self.bbox = bbox
@@ -51,9 +53,8 @@ class TrackedTag:
 
     @property
     def is_stale(self):
-        return self.frames_missed > self._max_missed
-
-    is_stale = property(lambda s: s.frames_missed > 5)
+        # Порог по умолчанию; трекер использует своё значение через _cleanup/active_tags.
+        return self.frames_missed > self._stale_threshold
 
     @property
     def age(self):
@@ -127,6 +128,7 @@ class PricetagTracker:
         tags = []
         for c in candidates:
             tag = TrackedTag(self._next_id, tuple(map(int, c[:4])), c[4], c[5], frame_idx)
+            tag._stale_threshold = self.max_frames_missed
             self._tags[self._next_id] = tag
             self._next_id += 1
             tags.append({"tag": tag, "bbox": c[:4], "confidence": c[4], "tag_type": c[5]})

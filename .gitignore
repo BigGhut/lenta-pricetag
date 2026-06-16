@@ -35,6 +35,9 @@ __pycache__/
 dist/
 build/
 
+# --- Test cache ---
+.pytest_cache/
+
 # --- Dataset cache ---
 *.cache
 

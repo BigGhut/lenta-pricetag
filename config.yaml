@@ -8,23 +8,61 @@ paths:
 model:
   pretrained: yolo12n.pt
   trained: models/yolov12n/yolov12n.pt
+  trained_new: models/yolov12n/yolov12n_retrained.pt
   trained_onnx: models/yolov12n/yolov12n.onnx
   export_onnx: export/yolov12n.onnx
   rknn: models/yolov12n/yolov12n.rknn
+  variants:
+    yolov12n: { imgsz: 1280, batch: 8 }
+    yolov12s: { imgsz: 1280, batch: 6 }
+    yolov12m: { imgsz: 1280, batch: 4 }
 
 data:
-  yaml: data/yolov12n/data_2class.yaml
+  yaml: data/video_yolo_tiled_v2/data.yaml
   imgsz: 640
-  nc: 2
+  nc: 1
 
 training:
+  model_name: yolov12n  # yolov12n | yolov12s | yolov12m
   epochs: 300
-  batch: 16
+  batch: 32
   device: 0
-  workers: 4
-  patience: 10
-  delta: 0.001
+  workers: 8
+  patience: 50
+  delta: 0.005
   monitor: val/box_loss
+  amp: true
+  val: true
+  save: true
+  save_period: 10
+  scheduler:
+    optimizer: AdamW
+    lr0: 0.001
+    lrf: 0.01
+    momentum: 0.937
+    weight_decay: 0.0005
+    warmup_epochs: 3.0
+    warmup_momentum: 0.8
+    warmup_bias_lr: 0.1
+    cos_lr: true
+
+augmentations:
+  hsv_h: 0.015
+  hsv_s: 0.7
+  hsv_v: 0.4
+  degrees: 0.0
+  translate: 0.1
+  scale: 0.5
+  shear: 0.0
+  perspective: 0.0
+  flipud: 0.0
+  fliplr: 0.5
+  mosaic: 1.0
+  mixup: 0.2
+  copy_paste: 0.3
+  erasing: 0.4
+  crop_fraction: 1.0
+  close_mosaic: 10
 
 export:
   simplify: true
@@ -37,34 +75,53 @@ rknn:
   optimization_level: 3
 
 cascade:
-  conf_threshold: 0.5
-  cascade_conf: 0.15
+  conf_threshold: 0.6
+  cascade_conf: 0.3
   iou_threshold: 0.45
-  min_ocr_width: 200
-  crop_expand_factor: 5
+  min_ocr_width: 400
+  crop_expand_factor: 2
+  # Adaptive YOLO settings
+  adaptive_yolo: true
+  yolo_skip_frames: 5  # skip YOLO for N frames when tracking confident
+  yolo_force_interval: 15  # force YOLO every N frames to catch new tags
+  ocr_interval: 7  # re-OCR tracked tags every N frames (increased for speed)
 
 candidate_detector:
-  min_size: 40
+  morph_kernel: 7
+  merge_radius: 200
+  nms_iou: 0.2
   white:
-    lower: [0, 0, 150]
-    upper: [180, 40, 255]
+    lower: [0, 0, 180]
+    upper: [180, 30, 255]
+    min_w: 80
+    min_h: 40
+    max_area: 45000
+    ar_min: 1.0
+    ar_max: 5.0
   red:
-    lower1: [0, 50, 50]
-    upper1: [10, 255, 255]
-    lower2: [170, 50, 50]
+    lower1: [0, 80, 80]
+    upper1: [8, 255, 255]
+    lower2: [172, 80, 80]
     upper2: [180, 255, 255]
+    min_w: 40
+    min_h: 30
+    max_area: 30000
   yellow:
-    lower: [20, 80, 180]
-    upper: [35, 255, 255]
-  morph_kernel: 15
+    lower: [22, 100, 200]
+    upper: [34, 255, 255]
+    min_w: 50
+    min_h: 25
+    max_area: 40000
+    ar_min: 1.0
+    ar_max: 4.0
 
 tracker:
-  center_dist_thresh: 2.0
+  center_dist_thresh: 10.0
   size_ratio_thresh: 0.25
-  max_frames_missed: 5
+  max_frames_missed: 15
 
 ocr:
-  engine: paddleocr  # paddleocr | easyocr | auto (fallback)
+  engine: easyocr
   languages: [ru, en]
   gpu: true
 
@@ -74,3 +131,34 @@ video:
 cluster:
   dy_threshold: 80
   dx_threshold: 600
+
+sahi:
+  enabled: true
+  tile_size: 640
+  stride: 320
+  conf_threshold: 0.15
+  iou_threshold: 0.45
+
+multiscale:
+  enabled: true
+  scales: [0.75, 1.0, 1.25]
+  conf_threshold: 0.15
+  iou_threshold: 0.45
+
+adaptive_hsv:
+  enabled: true
+  calibration_frames: 5
+
+adaptive_conf:
+  enabled: true
+  base_threshold: 0.5
+  min_threshold: 0.25
+  max_threshold: 0.7
+  window: 30
+  density_low: 3
+  density_high: 12
+
+temporal_boost:
+  enabled: true
+  max_boost: 1.3
+  per_frame: 0.03

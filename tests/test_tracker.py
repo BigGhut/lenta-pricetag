@@ -110,22 +110,20 @@ class TestTrackedTag:
         assert tag.frames_missed == 2
 
     def test_is_stale_below_threshold(self):
-        tag = TrackedTag(1, (0, 0, 100, 100), 0.5)
-        tag._stale_threshold = 5
+        # max_missed=5: 5 missed frames → not stale (5 == 5, not > 5)
+        tag = TrackedTag(1, (0, 0, 100, 100), 0.5, max_missed=5)
         for _ in range(5):
             tag.mark_missed()
-        assert tag.is_stale is False  # 5 == 5, not > 5
+        assert tag.is_stale is False
 
     def test_is_stale_above_threshold(self):
-        tag = TrackedTag(1, (0, 0, 100, 100), 0.5)
-        tag._stale_threshold = 5
+        tag = TrackedTag(1, (0, 0, 100, 100), 0.5, max_missed=5)
         for _ in range(6):
             tag.mark_missed()
         assert tag.is_stale is True
 
     def test_is_stale_custom_threshold(self):
-        tag = TrackedTag(1, (0, 0, 100, 100), 0.5)
-        tag._stale_threshold = 3
+        tag = TrackedTag(1, (0, 0, 100, 100), 0.5, max_missed=3)
         for _ in range(4):
             tag.mark_missed()
         assert tag.is_stale is True

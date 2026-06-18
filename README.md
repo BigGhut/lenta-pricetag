@@ -1,6 +1,7 @@
 # LENTA Pricetag Detection & OCR Pipeline
 
-Детекция и распознавание ценников в магазине «ЛЕНТА» с каскадным пайплайном: цветовая детекция → трекинг → YOLO refine (опционально) → OCR → CSV.
+Детекция и распознавание ценников в магазине «ЛЕНТА» с каскадным пайплайном:
+цветовая детекция → трекинг (Kalman + Hungarian) → SAHI/мульти-скейл YOLO refine → OCR → CSV.
 
 ## Архитектура
 
@@ -10,127 +11,145 @@
   ├─ Stage 1: Цветовая детекция (utils/candidate_detector.py)
   │   HSV → inRange → морфология → контуры
   │   White + Red + Yellow маски → слияние красной+белой частей
-  │   → 60-112 candidates
+  │   Адаптивная HSV-калибровка (auto_calibrate_hsv)
   │
   ├─ Stage 2: Трекер (utils/pricetag_tracker.py)
-  │   Center-distance Hungarian matching
-  │   NEW → Stage 3 (OCR)
+  │   Kalman filter + Hungarian matching (scipy)
+  │   NEW → Stage 3 (YOLO)
   │   TRACKED → reuse cached OCR (быстро)
   │
-  ├─ Stage 3: YOLO refine (опционально, при наличии RKNN)
-  │   infer/infer_yolo_rknn.py → точный bbox
+  ├─ Stage 3: YOLO refine (utils/tiled_inference.py)
+  │   SAHI (Slicing Aided Hyper Inference) — тайлы 640×640, stride 320
+  │   Мульти-скейл детекция (0.75×, 1.0×, 1.25×)
+  │   WBF (Weighted Boxes Fusion) слияние дублей
+  │   Адаптивный порог confidence (adaptive_conf)
+  │   infer/infer_yolo_rknn.py → RKNN int8 на RK3588
   │
   ├─ Stage 4: OCR + barcode + QR
-  │   infer/infer_paddleocr.py → PaddleOCR (fallback EasyOCR)
+  │   infer/infer_easyocr.py → EasyOCR
   │   utils/ocr_enhancer.py → CLAHE + sharpen + upscale
+  │   Мульти-pass OCR (otsu, adaptive, denoise, deskew)
   │   pyzbar → EAN-13 штрихкоды
-  │   OpenCV QR → QR-коды
+  │   utils/qr_parser.py → QR-коды (JSON / key=value / pipe)
+  │   utils/product_db.py → поиск товара по штрихкоду из CSV-каталога
   │
   └─ Stage 5: CSV export (utils/csv_writer.py)
-      Дедупликация spatial-кластеризацией
+      Буферизация, дедупликация, валидация цен/штрихкодов/bbox
       → results/pricetags_YYYYMMDD.csv
 ```
 
 ## Структура проекта
 
 ```
-├── config.yaml                    # Единый конфиг
-├── main_pipeline_local.py         # Основной пайплайн
+├── config.yaml                     # Единый конфиг (augmentations, sahi, adaptive_*)
 │
 ├── infer/
-│   ├── infer_paddleocr.py         # OCR (PaddleOCR + EasyOCR fallback)
-│   ├── infer_easyocr.py           # EasyOCR fallback
-│   └── infer_yolo_rknn.py         # YOLOv12n RKNN инференс
+│   ├── infer_easyocr.py            # EasyOCR распознавание
+│   └── infer_yolo_rknn.py          # YOLOv12n RKNN инференс
 │
 ├── utils/
-│   ├── candidate_detector.py      # Цветовая детекция ценников
-│   ├── cascade_pipeline.py        # Каскад: детекция → трекер → OCR
-│   ├── pricetag_tracker.py        # Трекинг между кадрами
-│   ├── csv_writer.py              # Экспорт в CSV (28 колонок)
-│   ├── ocr_enhancer.py            # Препроцессинг для OCR
-│   ├── config.py                  # Загрузчик config.yaml
-│   ├── qr_parser.py               # Парсинг QR-кода
-│   └── video_processor.py         # Пакетная обработка видео
+│   ├── __init__.py
+│   ├── candidate_detector.py       # Цветовая детекция ценников + адаптивная HSV
+│   ├── cascade_pipeline.py         # Каскад: детекция → трекер → YOLO → OCR
+│   ├── pricetag_tracker.py         # Kalman + Hungarian трекинг
+│   ├── tiled_inference.py          # SAHI + мульти-скейл + WBF слияние
+│   ├── wbf.py                      # Weighted Boxes Fusion
+│   ├── iou.py                      # IoU вычисление
+│   ├── csv_writer.py               # Экспорт в CSV
+│   ├── ocr_enhancer.py             # CLAHE + sharpen + мульти-pass OCR
+│   ├── qr_parser.py                # Парсинг QR-кода
+│   ├── product_db.py               # Поиск товара по штрихкоду
+│   └── config.py                   # Загрузчик config.yaml
+│
+├── train/
+│   ├── run_train_yolo.py           # Обучение YOLO (полный цикл с аугментациями)
+│   └── eval_trained_model.py       # Визуальная оценка обученной модели
+│
+├── data/yolov12n/
+│   ├── data.yaml                   # Конфиг YOLO (1 класс: pricetag)
+│   ├── data_2class.yaml             # Конфиг YOLO (2 класса)
+│   ├── data_full.yaml              # Конфиг YOLO (7 классов, внутренние элементы)
+│   ├── merge_tiled.py              # Слияние tiled-данных
+│   ├── merge_datasets.py          # Слияние нескольких датасетов
+│   ├── filter_small_boxes.py       # Фильтрация маленьких bbox
+│   ├── cleanup_dataset.py         # Очистка датасета
+│   └── stats_tiled.py             # Статистика tiled-данных
+│
+├── eval_compare.py                 # Сравнение моделей на тестовом кадре
+├── eval_visualize.py              # Визуализация результатов детекции
+├── run_test_10s.py                # Быстрый тест пайплайна (10 секунд)
 │
 ├── models/yolov12n/
-│   ├── yolov12n.pt                # Обученная YOLOv12n (mAP=0.994)
-│   └── yolov12n_qat.pt            # QAT (mAP=0.995, для RKNN)
+│   ├── yolov12n.pt                # Обученная YOLOv12n
+│   └── yolov12n_retrained.pt      # Дообученная на tiled-данных
 │
 ├── onnx2rknn/
 │   └── yolov12n_rknn.py           # ONNX → RKNN int8 конвертация
 │
-├── train_yolo.py                  # Обучение YOLOv12n
-├── train_qat.py                   # QAT дообучение
-├── export_yolo.py                 # Экспорт в ONNX
-├── prepare_data.py                # Подготовка данных (split + class remap)
-│
-└── data/yolov12n/
-    ├── data.yaml                  # Конфиг для YOLO (2 класса)
-    └── data_2class.yaml           # Альтернативный конфиг
+└── tests/
+    ├── conftest.py                 # Mock config.yaml для тестов
+    ├── test_csv_writer.py         # 53 теста — CSV-парсинг
+    ├── test_tracker.py             # 25 тестов — трекинг
+    ├── test_candidate_detector.py  # 10 тестов — геометрия кропов + IoU
+    └── test_qr_parser.py           # 9 тестов — QR-парсинг
 ```
 
 ## Установка
-
-### Основное окружение (Python 3.13)
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### PaddleOCR окружение (Python 3.12, опционально для RK3588)
-
-```bash
-# Создать отдельное окружение
-python3.12 -m venv .venv_paddle
-.venv_paddle\Scripts\activate   # Windows
-# или source .venv_paddle/bin/activate  # Linux
-
-pip install paddlepaddle-gpu paddleocr
-```
-
 ## Обучение YOLO
 
 ```bash
-# 1. Подготовка данных (train/val split + class remap)
-python prepare_data.py
+# Обучение на tiled-данных с аугментациями (настроены в config.yaml)
+python train/run_train_yolo.py
 
-# 2. Обучение
-python train_yolo.py                 # основное обучение
-python train_qat.py --epochs 5       # QAT дообучение (для RKNN)
-
-# 3. Экспорт
-python export_yolo.py                 # → ONNX
-# На RK3588: python onnx2rknn/yolov12n_rknn.py  # → RKNN int8
+# Визуальная оценка на тестовом кадре
+python train/eval_trained_model.py
 ```
 
-## Запуск пайплайна
+### Аугментации (config.yaml → augmentations)
+
+| Параметр | Значение | Описание |
+|----------|:--------:|----------|
+| mosaic | 1.0 | Mosaic 4-изображений (вкл) |
+| mixup | 0.2 | Mixup-блендинг |
+| copy_paste | 0.3 | Копипаст объектов |
+| erasing | 0.4 | Random erasing |
+| fliplr | 0.5 | Горизонтальный флип |
+| scale | 0.5 | Масштабирование |
+| close_mosaic | 10 | Выкл mosaic за 10 эпох до конца |
+
+## Запуск
 
 ```bash
-# Камера
-python main_pipeline_local.py
+# Быстрый тест пайплайна (10 секунд видео)
+python run_test_10s.py
 
-# Видео
-python main_pipeline_local.py --video 26_12-20.mp4 --skip 3
-
-# Пакетная обработка
-python utils/video_processor.py . --skip 3
+# Сравнение моделей
+python eval_compare.py
 ```
 
 ## Конфигурация
 
-Все параметры в `config.yaml`:
+Ключевые секции `config.yaml`:
 
 ```yaml
-ocr:
-  engine: paddleocr    # paddleocr | easyocr | auto (fallback)
-
+augmentations:        # Параметры аугментации YOLO
+sahi:                 # SAHI — тайлинг (tile_size: 640, stride: 320)
+multiscale:           # Мульти-скейл детекция (0.75×, 1.0×, 1.25×)
+adaptive_hsv:         # Авто-калибровка HSV порогов по статистике кадра
+adaptive_conf:        # Адаптивный порог confidence по плотности детекций
+temporal_boost:       # Временное усиление confidence для отслеженных объектов
+cascade:
+  adaptive_yolo: true           # Пропуск YOLO при уверенном трекинге
+  yolo_skip_frames: 5           # Пропуск YOLO при трекинге
+  yolo_force_interval: 15       # Принудительный YOLO каждые N кадров
 tracker:
-  center_dist_thresh: 2.0   # макс смещение центра (кратность размеру bbox)
-  size_ratio_thresh: 0.25   # мин соотношение размеров bbox
-
-cluster:
-  dy_threshold: 80          # высота ряда полки
-  dx_threshold: 600         # макс смещение ценника между кадрами
+  center_dist_thresh: 10.0      # Порог расстояния центров
+  max_frames_missed: 15         # Макс пропущенных кадров до удаления
 ```
 
 ## Модели (Google Drive)
@@ -138,8 +157,8 @@ cluster:
 | Файл | Размер | Описание |
 |------|:------:|----------|
 | `yolo12n.pt` | 5.3 MB | Pretrained COCO (скачивается автоматически) |
-| `models/yolov12n/yolov12n.pt` | 5.2 MB | Обученная модель (mAP=0.994) |
-| `models/yolov12n/yolov12n_qat.pt` | 5.2 MB | QAT модель (mAP=0.995) |
+| `models/yolov12n/yolov12n.pt` | 5.2 MB | Обученная модель |
+| `models/yolov12n/yolov12n_retrained.pt` | 5.2 MB | Дообученная на tiled-данных |
 
 **Ссылка на Google Drive:** <!-- TODO: добавить ссылку -->
 
@@ -151,3 +170,10 @@ cluster:
 | YOLO | PyTorch FP16 | RKNN int8 (~30ms) |
 | OCR | EasyOCR (CUDA) | PaddleOCR-RKNN (~50ms) |
 | RAM | 16GB+ | 8GB+ |
+
+## Тесты
+
+```bash
+# Запуск всех 97 тестов
+pytest tests/ -v
+```

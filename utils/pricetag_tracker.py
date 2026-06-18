@@ -1,5 +1,20 @@
-import numpy as np
+"""Pricetag tracker with Kalman filter and Hungarian matching."""
+
+from __future__ import annotations
+
+import logging
 from collections import OrderedDict
+from typing import Optional
+
+import numpy as np
+
+logger = logging.getLogger("pricetag.tracker")
+
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 
 try:
     from scipy.optimize import linear_sum_assignment
@@ -8,7 +23,8 @@ except ImportError:
     HAS_SCIPY = False
 
 
-def center_distance(box1, box2):
+def center_distance(box1: np.ndarray, box2: np.ndarray) -> float:
+    """Normalized center-to-center distance between two boxes."""
     cx1 = (box1[0] + box1[2]) / 2
     cy1 = (box1[1] + box1[3]) / 2
     cx2 = (box2[0] + box2[2]) / 2
@@ -19,68 +35,144 @@ def center_distance(box1, box2):
     return dist / (avg_size + 1e-6)
 
 
-def size_ratio(box1, box2):
+def size_ratio(box1: np.ndarray, box2: np.ndarray) -> float:
+    """Area ratio (smaller / larger) between two boxes."""
     a1 = (box1[2] - box1[0]) * (box1[3] - box1[1])
     a2 = (box2[2] - box2[0]) * (box2[3] - box2[1])
     return min(a1, a2) / (max(a1, a2) + 1e-6)
 
 
 class TrackedTag:
-    __slots__ = ("tag_id", "bbox", "ocr_data", "last_seen", "first_seen",
-                 "confidence", "tag_type", "frames_missed", "color",
-                 "_stale_threshold")
+    """A single tracked pricetag with Kalman filter prediction."""
 
-    def __init__(self, tag_id, bbox, confidence=0.0, tag_type="white", frame_idx=0):
+    __slots__ = ("tag_id", "bbox", "ocr_data", "last_seen", "first_seen",
+                 "confidence", "tag_type", "frames_missed", "color", "kalman",
+                 "max_missed", "_prev_bbox")
+
+    def __init__(
+        self,
+        tag_id: int,
+        bbox: tuple[int, int, int, int],
+        confidence: float = 0.0,
+        tag_type: str = "white",
+        frame_idx: int = 0,
+        max_missed: int = 5,
+    ) -> None:
         self.tag_id = tag_id
         self.bbox = bbox
-        self.ocr_data = {}
+        self.ocr_data: dict = {}
         self.last_seen = frame_idx
         self.first_seen = frame_idx
         self.confidence = confidence
         self.tag_type = tag_type
         self.frames_missed = 0
-        self.color = None
-        self._stale_threshold = 5  # default; tracker может переопределить
+        self.color: Optional[np.ndarray] = None
+        self.kalman = None
+        self.max_missed = max_missed
+        self._prev_bbox = None
+        if HAS_CV2:
+            self._init_kalman(bbox)
 
-    def update(self, bbox, confidence, frame_idx):
-        self.bbox = bbox
+    def _init_kalman(self, bbox: tuple[int, int, int, int]) -> None:
+        x1, y1, x2, y2 = bbox
+        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+        self.kalman = cv2.KalmanFilter(4, 2)
+        self.kalman.transitionMatrix = np.array([[1, 0, 1, 0],
+                                                  [0, 1, 0, 1],
+                                                  [0, 0, 1, 0],
+                                                  [0, 0, 0, 1]], dtype=np.float32)
+        self.kalman.measurementMatrix = np.array([[1, 0, 0, 0],
+                                                   [0, 1, 0, 0]], dtype=np.float32)
+        self.kalman.processNoiseCov = np.eye(4, dtype=np.float32) * 0.03
+        self.kalman.measurementNoiseCov = np.eye(2, dtype=np.float32) * 0.5
+        self.kalman.statePre = np.array([[cx], [cy], [0], [0]], dtype=np.float32)
+        self.kalman.statePost = np.array([[cx], [cy], [0], [0]], dtype=np.float32)
+
+    def predict(self) -> tuple[float, float, float, float]:
+        if self.kalman is None:
+            b = self.bbox
+            return (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+        prediction = self.kalman.predict()
+        cx, cy = prediction[0, 0], prediction[1, 0]
+        w = self.bbox[2] - self.bbox[0]
+        h = self.bbox[3] - self.bbox[1]
+        return (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2)
+
+    def update(
+        self,
+        bbox: np.ndarray,
+        confidence: float,
+        frame_idx: int,
+        ocr_data: Optional[dict] = None,
+    ) -> None:
+        self.bbox = tuple(float(v) for v in bbox)
         self.confidence = max(self.confidence, confidence)
         self.last_seen = frame_idx
         self.frames_missed = 0
+        if ocr_data:
+            self._merge_ocr(ocr_data)
+        if self.kalman is not None:
+            x1, y1, x2, y2 = bbox
+            cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
+            measurement = np.array([[np.float32(cx)], [np.float32(cy)]])
+            self.kalman.correct(measurement)
 
-    def mark_missed(self):
+    def _merge_ocr(self, new_ocr: dict) -> None:
+        for key, value in new_ocr.items():
+            if key not in self.ocr_data or (value and len(str(value)) > len(str(self.ocr_data.get(key, "")))):
+                self.ocr_data[key] = value
+
+    def mark_missed(self) -> None:
         self.frames_missed += 1
+        self.predict()
 
     @property
-    def is_stale(self):
-        # Порог по умолчанию; трекер использует своё значение через _cleanup/active_tags.
-        return self.frames_missed > self._stale_threshold
+    def is_stale(self) -> bool:
+        return self.frames_missed > self.max_missed
 
     @property
-    def age(self):
+    def age(self) -> int:
         return self.last_seen - self.first_seen
 
 
 class PricetagTracker:
-    def __init__(self, center_dist_thresh=2.0, size_ratio_thresh=0.25, max_frames_missed=5):
+    """Multi-object tracker with Hungarian matching and Kalman prediction."""
+
+    def __init__(
+        self,
+        center_dist_thresh: float = 2.0,
+        size_ratio_thresh: float = 0.25,
+        max_frames_missed: int = 5,
+    ) -> None:
         self.center_dist_thresh = center_dist_thresh
         self.size_ratio_thresh = size_ratio_thresh
         self.max_frames_missed = max_frames_missed
-        self._tags = OrderedDict()
+        self._tags: OrderedDict[int, TrackedTag] = OrderedDict()
         self._next_id = 0
 
     @property
-    def active_tags(self):
-        return [t for t in self._tags.values() if not t.frames_missed > self.max_frames_missed]
+    def active_tags(self) -> list[TrackedTag]:
+        return [t for t in self._tags.values() if t.frames_missed <= self.max_frames_missed]
 
-    def _match_score(self, tb, cb):
-        cd = center_distance(tb, cb)
-        sr = size_ratio(tb, cb)
-        if cd > self.center_dist_thresh or sr < self.size_ratio_thresh:
+    def _match_score(self, tracked_box: tuple[float, ...], candidate_box: np.ndarray) -> float:
+        """Compute matching score. Returns -1.0 if boxes are incompatible."""
+        cd = center_distance(np.array(tracked_box), candidate_box)
+        if cd > self.center_dist_thresh:
+            return -1.0
+        sr = size_ratio(np.array(tracked_box), candidate_box)
+        if sr < self.size_ratio_thresh:
             return -1.0
         return sr * (1.0 - cd / self.center_dist_thresh)
 
-    def update(self, candidates, frame_idx):
+    def update(
+        self,
+        candidates: list[tuple[int, int, int, int, float, str]],
+        frame_idx: int,
+    ) -> tuple[list[dict], list[TrackedTag]]:
+        """
+        Update tracker with new candidates.
+        Returns (new_tags, active_tracked_tags).
+        """
         if not candidates:
             for t in self.active_tags:
                 t.mark_missed()
@@ -97,6 +189,7 @@ class PricetagTracker:
 
         scores = np.zeros((len(tracked), len(candidates)))
         for ti, t in enumerate(tracked):
+            t_bbox = np.array(t.bbox)
             for ci, cb in enumerate(cand_bboxes):
                 scores[ti, ci] = self._match_score(t.bbox, cb)
 
@@ -105,36 +198,42 @@ class PricetagTracker:
         else:
             t_idx, c_idx = self._greedy(scores)
 
-        matched = set()
+        matched_tracks = set()
+        matched_cands = set()
         for ti, ci in zip(t_idx, c_idx):
             if scores[ti, ci] > 0:
                 tracked[ti].update(cand_bboxes[ci], cand_confs[ci], frame_idx)
                 tracked[ti].tag_type = cand_types[ci]
-                matched.add(ci)
+                matched_tracks.add(ti)
+                matched_cands.add(ci)
 
-        unmatched_t = set(range(len(tracked))) - set(t_idx)
-        for ti in unmatched_t:
-            tracked[ti].mark_missed()
+        for ti in range(len(tracked)):
+            if ti not in matched_tracks:
+                tracked[ti].mark_missed()
 
         new_tags = self._create_new(
-            [candidates[i] for i in range(len(candidates)) if i not in matched],
+            [candidates[i] for i in range(len(candidates)) if i not in matched_cands],
             frame_idx,
         )
 
         self._cleanup()
         return new_tags, list(self.active_tags)
 
-    def _create_new(self, candidates, frame_idx):
+    def _create_new(
+        self,
+        candidates: list[tuple[int, int, int, int, float, str]],
+        frame_idx: int,
+    ) -> list[dict]:
         tags = []
         for c in candidates:
-            tag = TrackedTag(self._next_id, tuple(map(int, c[:4])), c[4], c[5], frame_idx)
-            tag._stale_threshold = self.max_frames_missed
+            bbox_tuple = (int(c[0]), int(c[1]), int(c[2]), int(c[3]))
+            tag = TrackedTag(self._next_id, bbox_tuple, c[4], c[5], frame_idx, self.max_frames_missed)
             self._tags[self._next_id] = tag
             self._next_id += 1
             tags.append({"tag": tag, "bbox": c[:4], "confidence": c[4], "tag_type": c[5]})
         return tags
 
-    def _greedy(self, scores):
+    def _greedy(self, scores: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         rows, cols = [], []
         used_r, used_c = set(), set()
         while True:
@@ -149,11 +248,11 @@ class PricetagTracker:
             scores[idx] = -1
         return np.array(rows), np.array(cols)
 
-    def _cleanup(self):
+    def _cleanup(self) -> None:
         stale = [tid for tid, t in self._tags.items() if t.frames_missed > self.max_frames_missed]
         for tid in stale:
             del self._tags[tid]
 
-    def reset(self):
+    def reset(self) -> None:
         self._tags.clear()
         self._next_id = 0

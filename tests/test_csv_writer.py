@@ -121,10 +121,11 @@ class TestClassifyColor:
 
 class TestExtractBarcode:
     def test_ean13(self):
-        assert extract_barcode(["4600644110006"]) == "4600644110006"
+        # 4600644110002 is a valid EAN13 (check digit 2)
+        assert extract_barcode(["4600644110002"]) == "4600644110002"
 
     def test_ean13_in_text(self):
-        assert extract_barcode(["штрихкод 4600644110006 конец"]) == "4600644110006"
+        assert extract_barcode(["штрихкод 4600644110002 конец"]) == "4600644110002"
 
     def test_short_digits_ignored(self):
         assert extract_barcode(["12345"]) is None
@@ -138,8 +139,9 @@ class TestExtractBarcode:
     def test_non_string_input(self):
         assert extract_barcode([None]) is None
 
-    def test_12_digits(self):
-        assert extract_barcode(["123456789012"]) == "123456789012"
+    def test_invalid_ean13_checksum_ignored(self):
+        # 4600644110006 has invalid check digit (correct is ...0002) → ignored
+        assert extract_barcode(["4600644110006"]) is None
 
     def test_11_digits_ignored(self):
         assert extract_barcode(["12345678901"]) is None

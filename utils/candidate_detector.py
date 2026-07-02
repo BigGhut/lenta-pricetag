@@ -5,8 +5,13 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-import cv2
 import numpy as np
+
+try:
+    import cv2
+    HAS_CV2 = True
+except ImportError:
+    HAS_CV2 = False
 
 from utils.config import get
 from utils.iou import iou
@@ -25,7 +30,7 @@ def _get_cfg() -> dict:
 
 def auto_calibrate_hsv(frame: np.ndarray) -> Optional[dict]:
     """Auto-calibrate HSV thresholds from frame statistics."""
-    if not get("adaptive_hsv.enabled", False):
+    if not get("adaptive_hsv.enabled", False) or not HAS_CV2:
         return None
 
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -64,6 +69,10 @@ def detect_pricetag_candidates(
     Returns list of (x1, y1, x2, y2, confidence, type).
     """
     h, w = frame.shape[:2]
+
+    if not HAS_CV2:
+        return []
+
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     cfg = hsv_calib if hsv_calib is not None else _get_cfg()
 
